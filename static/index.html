@@ -6,6 +6,17 @@
 <title>Jarvis AI</title>
 <style>
   :root {
+    --bg: #ffffff;
+    --panel: #f5f6f8;
+    --bubble-ai: #f0f1f3;
+    --border: #e2e5ea;
+    --accent: #2563eb;
+    --text: #14171f;
+    --muted: #6b7280;
+    --user-grad-1: #2563eb;
+    --user-grad-2: #1d4ed8;
+  }
+  body.dark {
     --bg: #0d1117;
     --panel: #161b22;
     --bubble-ai: #21262d;
@@ -25,6 +36,7 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
+    transition: background 0.2s, color 0.2s;
   }
   header {
     background: var(--panel);
@@ -37,6 +49,20 @@
   header .dot { color: var(--accent); font-size: 20px; }
   header h1 { font-size: 15px; margin: 0; font-weight: bold; }
   header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  #themeBtn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    width: 34px;
+    height: 34px;
+    cursor: pointer;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #themeBtn:hover { border-color: var(--accent); }
   #chat {
     flex: 1;
     overflow-y: auto;
@@ -73,6 +99,26 @@
     margin-bottom: 4px;
     opacity: 0.8;
   }
+  #fileChip {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 10px;
+    margin: 0 18px;
+    font-size: 12px;
+    color: var(--text);
+    max-width: fit-content;
+  }
+  #fileChip button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 14px;
+  }
   #inputBar {
     background: var(--panel);
     border-top: 1px solid var(--border);
@@ -107,7 +153,7 @@
   #sendBtn {
     background: var(--accent);
     border: none;
-    color: #0d1117;
+    color: white;
     font-weight: bold;
     border-radius: 10px;
     padding: 0 18px;
@@ -125,13 +171,22 @@
   <span class="dot">◉</span>
   <h1>JARVIS AI</h1>
   <span class="status" id="status">🟢 Ready</span>
+  <button id="themeBtn" title="Dark/Light mode">🌙</button>
 </header>
 
 <div id="chat"></div>
 
+<div id="fileChip">
+  <span>📎</span>
+  <span class="fname"></span>
+  <button id="removeFileBtn" title="Hatao">✕</button>
+</div>
+
 <div id="inputBar">
+  <button class="iconBtn" id="attachBtn" title="File attach karo">📎</button>
+  <input type="file" id="fileInput" hidden accept="image/*,video/*,audio/*,.pdf,.txt,.csv,.xlsx,.xls,.docx" />
   <button class="iconBtn" id="micBtn" title="Bolke poocho">🎙️</button>
-  <input id="msgInput" type="text" placeholder="Kuch bhi poocho..." autocomplete="off" />
+  <input id="msgInput" type="text" placeholder="Kuch bhi poocho ya file attach karo..." autocomplete="off" />
   <button class="iconBtn" id="clearBtn" title="Chat clear karo">🗑️</button>
   <button id="sendBtn">Send</button>
 </div>
@@ -143,9 +198,33 @@ const sendBtn = document.getElementById('sendBtn');
 const micBtn = document.getElementById('micBtn');
 const clearBtn = document.getElementById('clearBtn');
 const statusEl = document.getElementById('status');
+const themeBtn = document.getElementById('themeBtn');
+const attachBtn = document.getElementById('attachBtn');
+const fileInput = document.getElementById('fileInput');
+const fileChip = document.getElementById('fileChip');
+const removeFileBtn = document.getElementById('removeFileBtn');
 
 let sessionId = localStorage.getItem('jarvis_session_id');
+let attachedFile = null;
 
+// ---------- Theme (light default, dark toggle) ----------
+function applyTheme(mode) {
+  if (mode === 'dark') {
+    document.body.classList.add('dark');
+    themeBtn.textContent = '☀️';
+  } else {
+    document.body.classList.remove('dark');
+    themeBtn.textContent = '🌙';
+  }
+  localStorage.setItem('jarvis_theme', mode);
+}
+applyTheme(localStorage.getItem('jarvis_theme') || 'light');
+themeBtn.addEventListener('click', () => {
+  const isDark = document.body.classList.contains('dark');
+  applyTheme(isDark ? 'light' : 'dark');
+});
+
+// ---------- Session ----------
 async function initSession() {
   if (!sessionId) {
     const res = await fetch('/api/session', { method: 'POST' });
@@ -178,18 +257,48 @@ function speak(text) {
   window.speechSynthesis.speak(utter);
 }
 
-async function sendMessage(text) {
-  if (!text.trim()) return;
-  inputEl.value = '';
-  addBubble(text, true);
+// ---------- File attach ----------
+attachBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => {
+  attachedFile = e.target.files[0] || null;
+  updateFileChip();
+});
+removeFileBtn.addEventListener('click', () => {
+  attachedFile = null;
+  updateFileChip();
+});
+function updateFileChip() {
+  if (attachedFile) {
+    fileChip.style.display = 'flex';
+    fileChip.querySelector('.fname').textContent = attachedFile.name;
+  } else {
+    fileChip.style.display = 'none';
+    fileInput.value = '';
+  }
+}
 
+// ---------- Send message (text and/or file) ----------
+async function sendMessage(text) {
+  if (!text.trim() && !attachedFile) return;
+
+  const fileToSend = attachedFile;
+  const displayText = text.trim() || ('📎 ' + (fileToSend ? fileToSend.name : ''));
+  inputEl.value = '';
+  attachedFile = null;
+  updateFileChip();
+
+  addBubble(displayText, true);
   const aiBodyEl = addBubble('...', false);
   statusEl.textContent = '🧠 Soch raha hoon...';
 
+  const formData = new FormData();
+  formData.append('message', text);
+  formData.append('session_id', sessionId);
+  if (fileToSend) formData.append('file', fileToSend);
+
   const res = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text, session_id: sessionId })
+    body: formData
   });
 
   const reader = res.body.getReader();
@@ -271,10 +380,9 @@ if (SpeechRecognition) {
 }
 
 initSession().then(() => {
-  addBubble('Namaste! Main Jarvis hoon 🙏 Aapki kya seva kar sakta hoon?', false);
+  addBubble('Namaste! Main Jarvis hoon 🙏 File attach karke (photo/video/PDF/Excel/Word) uska data bhi poochh sakte ho.', false);
 });
 </script>
 
 </body>
 </html>
-
