@@ -7,89 +7,165 @@
 <style>
   :root {
     --bg: #ffffff;
+    --sidebar-bg: #f9f9f9;
     --panel: #f5f6f8;
-    --bubble-ai: #f0f1f3;
-    --border: #e2e5ea;
-    --accent: #2563eb;
-    --text: #14171f;
+    --bubble-ai: #f5f5f7;
+    --border: #e5e5e5;
+    --accent: #10a37f;
+    --text: #0d0d0d;
     --muted: #6b7280;
-    --user-grad-1: #2563eb;
-    --user-grad-2: #1d4ed8;
+    --hover: #ececec;
+    --send-bg: #0d0d0d;
   }
   body.dark {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --bubble-ai: #21262d;
-    --border: #30363d;
-    --accent: #58a6ff;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --user-grad-1: #1f6feb;
-    --user-grad-2: #1158c7;
+    --bg: #212121;
+    --sidebar-bg: #171717;
+    --panel: #2a2a2a;
+    --bubble-ai: #2f2f2f;
+    --border: #3a3a3a;
+    --accent: #10a37f;
+    --text: #ececec;
+    --muted: #9b9b9b;
+    --hover: #2f2f2f;
+    --send-bg: #ececec;
   }
   * { box-sizing: border-box; }
-  body {
+  html, body {
     margin: 0;
+    height: 100%;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  body {
+    display: flex;
     background: var(--bg);
     color: var(--text);
-    font-family: "Segoe UI", system-ui, sans-serif;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
     transition: background 0.2s, color 0.2s;
   }
-  header {
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 20px;
+
+  /* ---------- Sidebar ---------- */
+  #sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    transition: transform 0.2s;
+  }
+  .sideBtn {
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-  header .dot { color: var(--accent); font-size: 20px; }
-  header h1 { font-size: 15px; margin: 0; font-weight: bold; }
-  header .status { margin-left: auto; font-size: 12px; color: var(--muted); }
-  #themeBtn {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 8px;
-    width: 34px;
-    height: 34px;
+    padding: 10px 12px;
+    border-radius: 10px;
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    text-align: left;
+    width: 100%;
+  }
+  .sideBtn:hover { background: var(--hover); }
+  #newChatBtn { border: 1px solid var(--border); font-weight: 500; margin-bottom: 6px; }
+  #searchInput {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    margin: 4px 0 10px 0;
+    outline: none;
+  }
+  #chatList {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+  }
+  .chatItem {
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .chatItem:hover { background: var(--hover); }
+  .chatItem.active { background: var(--hover); font-weight: 600; }
+  #sidebarBottom {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* ---------- Main ---------- */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: relative;
+  }
+  #topbar {
     display: flex;
     align-items: center;
-    justify-content: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 14px;
+    gap: 10px;
   }
-  #themeBtn:hover { border-color: var(--accent); }
+  #menuToggle { display: none; background: none; border: none; font-size: 18px; color: var(--text); cursor: pointer; }
+  #status { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: normal; }
+
+  #hero {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+    padding: 20px;
+  }
+  #hero h1 { font-size: 28px; font-weight: 600; margin: 0; }
+
   #chat {
     flex: 1;
     overflow-y: auto;
-    padding: 25px;
+    padding: 25px 15%;
     display: flex;
     flex-direction: column;
     gap: 18px;
   }
   .bubble {
-    max-width: 700px;
+    max-width: 100%;
     border-radius: 16px;
-    padding: 10px 14px;
-    font-size: 14px;
-    line-height: 1.5;
+    padding: 10px 16px;
+    font-size: 15px;
+    line-height: 1.6;
     white-space: pre-wrap;
     word-wrap: break-word;
   }
   .bubble.user {
     align-self: flex-end;
-    background: linear-gradient(135deg, var(--user-grad-1), var(--user-grad-2));
-    border-bottom-right-radius: 4px;
+    background: var(--accent);
     color: white;
+    border-bottom-right-radius: 4px;
+    max-width: 70%;
   }
   .bubble.ai {
     align-self: flex-start;
     background: var(--bubble-ai);
-    border: 1px solid var(--border);
     border-bottom-left-radius: 4px;
   }
   .bubble .name {
@@ -97,8 +173,9 @@
     font-size: 11px;
     font-weight: bold;
     margin-bottom: 4px;
-    opacity: 0.8;
+    opacity: 0.7;
   }
+
   #fileChip {
     display: none;
     align-items: center;
@@ -107,133 +184,188 @@
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 6px 10px;
-    margin: 0 18px;
+    margin: 0 15% 8px 15%;
     font-size: 12px;
-    color: var(--text);
     max-width: fit-content;
   }
-  #fileChip button {
-    background: none;
-    border: none;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 14px;
+  #fileChip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+
+  #inputWrap {
+    padding: 14px 15% 22px 15%;
   }
   #inputBar {
-    background: var(--panel);
-    border-top: 1px solid var(--border);
-    padding: 14px 18px;
     display: flex;
-    gap: 10px;
     align-items: center;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 8px 8px 8px 16px;
   }
   #msgInput {
     flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 14px;
+    border: none;
+    background: transparent;
     color: var(--text);
-    font-size: 14px;
+    font-size: 15px;
     outline: none;
+    padding: 8px 0;
   }
-  #msgInput:focus { border-color: var(--accent); }
-  button.iconBtn {
-    background: var(--bg);
-    border: 1px solid var(--border);
+  button.roundBtn {
+    background: transparent;
+    border: none;
     color: var(--text);
-    border-radius: 10px;
-    width: 42px;
-    height: 42px;
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
     cursor: pointer;
     font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
-  button.iconBtn:hover { border-color: var(--accent); }
-  button.iconBtn.active { border-color: #3fb950; color: #3fb950; }
+  button.roundBtn:hover { background: var(--hover); }
+  button.roundBtn.active { color: #ff4d4f; }
   #sendBtn {
-    background: var(--accent);
+    background: var(--send-bg);
+    color: var(--bg);
     border: none;
-    color: white;
-    font-weight: bold;
-    border-radius: 10px;
-    padding: 0 18px;
-    height: 42px;
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
     cursor: pointer;
+    font-size: 16px;
+    flex-shrink: 0;
   }
-  #sendBtn:hover { opacity: 0.9; }
+  #sendBtn:disabled { opacity: 0.4; cursor: default; }
+  #hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 8px; }
+
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  @media (max-width: 768px) {
+    #sidebar {
+      position: fixed;
+      z-index: 20;
+      height: 100vh;
+      transform: translateX(-100%);
+    }
+    #sidebar.open { transform: translateX(0); }
+    #menuToggle { display: block; }
+    #chat, #fileChip { padding-left: 5%; padding-right: 5%; }
+    #inputWrap { padding-left: 5%; padding-right: 5%; }
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <span class="dot">◉</span>
-  <h1>JARVIS AI</h1>
-  <span class="status" id="status">🟢 Ready</span>
-  <button id="themeBtn" title="Dark/Light mode">🌙</button>
-</header>
-
-<div id="chat"></div>
-
-<div id="fileChip">
-  <span>📎</span>
-  <span class="fname"></span>
-  <button id="removeFileBtn" title="Hatao">✕</button>
+<div id="sidebar">
+  <button class="sideBtn" id="newChatBtn">➕ New chat</button>
+  <input id="searchInput" placeholder="🔍 Search chats" />
+  <div id="chatList"></div>
+  <div id="sidebarBottom">
+    <button class="sideBtn" id="themeBtn">🌙 Dark mode</button>
+    <button class="sideBtn" id="clearAllBtn">🗑️ Clear all chats</button>
+  </div>
 </div>
 
-<div id="inputBar">
-  <button class="iconBtn" id="attachBtn" title="File attach karo">📎</button>
-  <input type="file" id="fileInput" hidden accept="image/*,video/*,audio/*,.pdf,.txt,.csv,.xlsx,.xls,.docx" />
-  <button class="iconBtn" id="micBtn" title="Bolke poocho">🎙️</button>
-  <input id="msgInput" type="text" placeholder="Kuch bhi poocho ya file attach karo..." autocomplete="off" />
-  <button class="iconBtn" id="clearBtn" title="Chat clear karo">🗑️</button>
-  <button id="sendBtn">Send</button>
+<div id="main">
+  <div id="topbar">
+    <button id="menuToggle">☰</button>
+    <span id="chatTitle">Jarvis AI</span>
+    <span id="status">🟢 Ready</span>
+  </div>
+
+  <div id="hero">
+    <h1>Where should we begin?</h1>
+  </div>
+
+  <div id="chat" style="display:none;"></div>
+
+  <div id="fileChip">
+    <span>📎</span><span class="fname"></span>
+    <button id="removeFileBtn">✕</button>
+  </div>
+
+  <div id="inputWrap">
+    <div id="inputBar">
+      <button class="roundBtn" id="attachBtn" title="File attach karo">📎</button>
+      <input type="file" id="fileInput" hidden accept="image/*,video/*,audio/*,.pdf,.txt,.csv,.xlsx,.xls,.docx" />
+      <input id="msgInput" type="text" placeholder="Message Jarvis..." autocomplete="off" />
+      <button class="roundBtn" id="micBtn" title="Bolke poocho">🎙️</button>
+      <button id="sendBtn" title="Send">➤</button>
+    </div>
+    <div id="hint">Jarvis file (photo/video/PDF/Excel/Word) padh kar uska data analyze kar sakta hai.</div>
+  </div>
 </div>
 
 <script>
+const sidebarEl = document.getElementById('sidebar');
+const chatListEl = document.getElementById('chatList');
+const searchInput = document.getElementById('searchInput');
+const newChatBtn = document.getElementById('newChatBtn');
+const themeBtn = document.getElementById('themeBtn');
+const clearAllBtn = document.getElementById('clearAllBtn');
+const menuToggle = document.getElementById('menuToggle');
+const chatTitleEl = document.getElementById('chatTitle');
+
+const heroEl = document.getElementById('hero');
 const chatEl = document.getElementById('chat');
 const inputEl = document.getElementById('msgInput');
 const sendBtn = document.getElementById('sendBtn');
 const micBtn = document.getElementById('micBtn');
-const clearBtn = document.getElementById('clearBtn');
 const statusEl = document.getElementById('status');
-const themeBtn = document.getElementById('themeBtn');
 const attachBtn = document.getElementById('attachBtn');
 const fileInput = document.getElementById('fileInput');
 const fileChip = document.getElementById('fileChip');
 const removeFileBtn = document.getElementById('removeFileBtn');
 
-let sessionId = localStorage.getItem('jarvis_session_id');
+let chats = JSON.parse(localStorage.getItem('jarvis_chats') || '[]');
+let activeChatId = null;
 let attachedFile = null;
 
-// ---------- Theme (light default, dark toggle) ----------
+function saveChats() {
+  localStorage.setItem('jarvis_chats', JSON.stringify(chats));
+}
+
+// ---------- Theme ----------
 function applyTheme(mode) {
   if (mode === 'dark') {
     document.body.classList.add('dark');
-    themeBtn.textContent = '☀️';
+    themeBtn.textContent = '☀️ Light mode';
   } else {
     document.body.classList.remove('dark');
-    themeBtn.textContent = '🌙';
+    themeBtn.textContent = '🌙 Dark mode';
   }
   localStorage.setItem('jarvis_theme', mode);
 }
 applyTheme(localStorage.getItem('jarvis_theme') || 'light');
 themeBtn.addEventListener('click', () => {
-  const isDark = document.body.classList.contains('dark');
-  applyTheme(isDark ? 'light' : 'dark');
+  applyTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
 });
 
-// ---------- Session ----------
-async function initSession() {
-  if (!sessionId) {
-    const res = await fetch('/api/session', { method: 'POST' });
-    const data = await res.json();
-    sessionId = data.session_id;
-    localStorage.setItem('jarvis_session_id', sessionId);
-  }
-}
+// ---------- Sidebar toggle (mobile) ----------
+menuToggle.addEventListener('click', () => sidebarEl.classList.toggle('open'));
 
+// ---------- Sidebar rendering ----------
+function renderSidebar(filter = '') {
+  chatListEl.innerHTML = '';
+  const f = filter.trim().toLowerCase();
+  chats
+    .filter(c => !f || c.title.toLowerCase().includes(f))
+    .slice().reverse()
+    .forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'chatItem' + (c.id === activeChatId ? ' active' : '');
+      item.textContent = c.title;
+      item.addEventListener('click', () => selectChat(c.id));
+      chatListEl.appendChild(item);
+    });
+}
+searchInput.addEventListener('input', () => renderSidebar(searchInput.value));
+
+// ---------- Chat bubble rendering ----------
 function addBubble(text, isUser) {
   const b = document.createElement('div');
   b.className = 'bubble ' + (isUser ? 'user' : 'ai');
@@ -241,7 +373,6 @@ function addBubble(text, isUser) {
   name.className = 'name';
   name.textContent = isUser ? '👤 You' : '🤖 Jarvis';
   const body = document.createElement('span');
-  body.className = 'body';
   body.textContent = text;
   b.appendChild(name);
   b.appendChild(body);
@@ -250,11 +381,60 @@ function addBubble(text, isUser) {
   return body;
 }
 
-function speak(text) {
-  if (!('speechSynthesis' in window)) return;
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.rate = 1.0;
-  window.speechSynthesis.speak(utter);
+function renderMessages(chat) {
+  chatEl.innerHTML = '';
+  chat.messages.forEach(m => addBubble(m.text, m.role === 'user'));
+}
+
+function showHero() {
+  heroEl.style.display = 'flex';
+  chatEl.style.display = 'none';
+  chatTitleEl.textContent = 'Jarvis AI';
+}
+function showChat() {
+  heroEl.style.display = 'none';
+  chatEl.style.display = 'flex';
+}
+
+// ---------- New chat / select chat ----------
+newChatBtn.addEventListener('click', () => {
+  activeChatId = null;
+  showHero();
+  renderSidebar(searchInput.value);
+  sidebarEl.classList.remove('open');
+});
+
+function selectChat(id) {
+  const chat = chats.find(c => c.id === id);
+  if (!chat) return;
+  activeChatId = id;
+  chatTitleEl.textContent = chat.title;
+  showChat();
+  renderMessages(chat);
+  renderSidebar(searchInput.value);
+  sidebarEl.classList.remove('open');
+}
+
+clearAllBtn.addEventListener('click', () => {
+  if (!confirm('Sab chats delete karni hain?')) return;
+  chats = [];
+  activeChatId = null;
+  saveChats();
+  showHero();
+  renderSidebar();
+});
+
+async function ensureActiveChat(firstMessageText) {
+  if (activeChatId) return chats.find(c => c.id === activeChatId);
+  const res = await fetch('/api/session', { method: 'POST' });
+  const data = await res.json();
+  const title = (firstMessageText || 'File chat').slice(0, 30) || 'New chat';
+  const chat = { id: data.session_id, title, messages: [] };
+  chats.push(chat);
+  activeChatId = chat.id;
+  saveChats();
+  renderSidebar(searchInput.value);
+  return chat;
 }
 
 // ---------- File attach ----------
@@ -277,7 +457,14 @@ function updateFileChip() {
   }
 }
 
-// ---------- Send message (text and/or file) ----------
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1.0;
+  window.speechSynthesis.speak(utter);
+}
+
+// ---------- Send message ----------
 async function sendMessage(text) {
   if (!text.trim() && !attachedFile) return;
 
@@ -287,63 +474,62 @@ async function sendMessage(text) {
   attachedFile = null;
   updateFileChip();
 
+  const chat = await ensureActiveChat(displayText);
+  showChat();
+
+  chat.messages.push({ role: 'user', text: displayText });
   addBubble(displayText, true);
+  saveChats();
+  renderSidebar(searchInput.value);
+
   const aiBodyEl = addBubble('...', false);
   statusEl.textContent = '🧠 Soch raha hoon...';
+  sendBtn.disabled = true;
 
   const formData = new FormData();
   formData.append('message', text);
-  formData.append('session_id', sessionId);
+  formData.append('session_id', chat.id);
   if (fileToSend) formData.append('file', fileToSend);
 
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    body: formData
-  });
+  try {
+    const res = await fetch('/api/chat', { method: 'POST', body: formData });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalText = '';
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let finalText = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop();
-
-    for (const part of parts) {
-      if (!part.startsWith('data: ')) continue;
-      const payload = JSON.parse(part.slice(6));
-      if (payload.chunk) {
-        finalText += payload.chunk;
-        aiBodyEl.textContent = finalText;
-        chatEl.scrollTop = chatEl.scrollHeight;
-      } else if (payload.error) {
-        aiBodyEl.textContent = '⚠️ ' + payload.error;
-      } else if (payload.done) {
-        statusEl.textContent = '🟢 Ready';
-        if (finalText.trim()) speak(finalText);
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        const payload = JSON.parse(part.slice(6));
+        if (payload.chunk) {
+          finalText += payload.chunk;
+          aiBodyEl.textContent = finalText;
+          chatEl.scrollTop = chatEl.scrollHeight;
+        } else if (payload.error) {
+          aiBodyEl.textContent = '⚠️ ' + payload.error;
+        } else if (payload.done) {
+          statusEl.textContent = '🟢 Ready';
+          if (finalText.trim()) speak(finalText);
+        }
       }
     }
+    chat.messages.push({ role: 'ai', text: finalText || aiBodyEl.textContent });
+    saveChats();
+  } finally {
+    sendBtn.disabled = false;
   }
 }
 
 sendBtn.addEventListener('click', () => sendMessage(inputEl.value));
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendMessage(inputEl.value);
-});
-
-clearBtn.addEventListener('click', async () => {
-  await fetch('/api/clear', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId })
-  });
-  chatEl.innerHTML = '';
-  addBubble('Sab clear kar diya! Nayi shuruaat 🚀', false);
 });
 
 // 🎙️ Voice input (Chrome/Edge — Web Speech API)
@@ -366,10 +552,7 @@ if (SpeechRecognition) {
     micBtn.classList.remove('active');
     statusEl.textContent = '🟢 Ready';
   };
-  recognition.onresult = (event) => {
-    const text = event.results[0][0].transcript;
-    sendMessage(text);
-  };
+  recognition.onresult = (event) => sendMessage(event.results[0][0].transcript);
   micBtn.addEventListener('click', () => {
     if (recognizing) { recognition.stop(); return; }
     recognition.start();
@@ -379,9 +562,9 @@ if (SpeechRecognition) {
   micBtn.title = 'Yeh browser voice input support nahi karta (Chrome try karo)';
 }
 
-initSession().then(() => {
-  addBubble('Namaste! Main Jarvis hoon 🙏 File attach karke (photo/video/PDF/Excel/Word) uska data bhi poochh sakte ho.', false);
-});
+// ---------- Init ----------
+renderSidebar();
+showHero();
 </script>
 
 </body>
