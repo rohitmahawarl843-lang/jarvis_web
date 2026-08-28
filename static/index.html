@@ -4,269 +4,158 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Jarvis AI</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   :root {
-    --bg: #ffffff;
-    --sidebar-bg: #f9f9f9;
-    --panel: #f5f6f8;
-    --bubble-ai: #f5f5f7;
-    --border: #e5e5e5;
-    --accent: #10a37f;
-    --text: #0d0d0d;
-    --muted: #6b7280;
-    --hover: #ececec;
-    --send-bg: #0d0d0d;
+    --bg: #ffffff; --sidebar-bg: #f9f9f9; --panel: #f5f6f8;
+    --bubble-ai: #f5f5f7; --border: #e5e5e5; --accent: #10a37f;
+    --text: #0d0d0d; --muted: #6b7280; --hover: #ececec; --send-bg: #0d0d0d;
+    --danger: #e5484d;
   }
   body.dark {
-    --bg: #212121;
-    --sidebar-bg: #171717;
-    --panel: #2a2a2a;
-    --bubble-ai: #2f2f2f;
-    --border: #3a3a3a;
-    --accent: #10a37f;
-    --text: #ececec;
-    --muted: #9b9b9b;
-    --hover: #2f2f2f;
-    --send-bg: #ececec;
+    --bg: #212121; --sidebar-bg: #171717; --panel: #2a2a2a;
+    --bubble-ai: #2f2f2f; --border: #3a3a3a; --accent: #10a37f;
+    --text: #ececec; --muted: #9b9b9b; --hover: #2f2f2f; --send-bg: #ececec;
   }
   * { box-sizing: border-box; }
-  html, body {
-    margin: 0;
-    height: 100%;
-    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; }
+  body { display: flex; background: var(--bg); color: var(--text); transition: background 0.2s, color 0.2s; }
+  code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; overflow-x: auto; }
+  .bubble p:first-child { margin-top: 0; }
+  .bubble p:last-child { margin-bottom: 0; }
+
+  /* ---------- Auth screen ---------- */
+  #authScreen {
+    position: fixed; inset: 0; background: var(--bg); z-index: 100;
+    display: flex; align-items: center; justify-content: center;
   }
-  body {
-    display: flex;
-    background: var(--bg);
-    color: var(--text);
-    transition: background 0.2s, color 0.2s;
+  #authBox { width: 320px; display: flex; flex-direction: column; gap: 12px; }
+  #authBox h2 { text-align: center; margin: 0 0 6px 0; }
+  #authBox input {
+    padding: 11px 14px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 14px; outline: none;
   }
+  #authBox input:focus { border-color: var(--accent); }
+  #authBox button.primary {
+    padding: 11px; border-radius: 10px; border: none; background: var(--accent);
+    color: white; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  #authError { color: var(--danger); font-size: 13px; text-align: center; min-height: 16px; }
+  #authToggle { text-align: center; font-size: 13px; color: var(--muted); }
+  #authToggle a { color: var(--accent); cursor: pointer; text-decoration: none; }
 
   /* ---------- Sidebar ---------- */
   #sidebar {
-    width: 260px;
-    flex-shrink: 0;
-    background: var(--sidebar-bg);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    padding: 10px;
-    transition: transform 0.2s;
+    width: 260px; flex-shrink: 0; background: var(--sidebar-bg);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    padding: 10px; transition: transform 0.2s;
   }
   .sideBtn {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text);
-    background: transparent;
-    border: none;
-    text-align: left;
-    width: 100%;
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+    cursor: pointer; font-size: 14px; color: var(--text); background: transparent;
+    border: none; text-align: left; width: 100%;
   }
   .sideBtn:hover { background: var(--hover); }
   #newChatBtn { border: 1px solid var(--border); font-weight: 500; margin-bottom: 6px; }
   #searchInput {
-    width: 100%;
-    padding: 9px 12px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    font-size: 13px;
-    margin: 4px 0 10px 0;
-    outline: none;
+    width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 13px; margin: 4px 0 10px 0; outline: none;
   }
-  #chatList {
-    flex: 1;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-top: 6px;
+  #chatList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+  .chatRow {
+    display: flex; align-items: center; padding: 9px 8px 9px 12px; border-radius: 8px;
+    font-size: 13px; cursor: pointer; color: var(--text); gap: 4px;
   }
-  .chatItem {
-    padding: 9px 12px;
-    border-radius: 8px;
-    font-size: 13px;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--text);
-  }
-  .chatItem:hover { background: var(--hover); }
-  .chatItem.active { background: var(--hover); font-weight: 600; }
-  #sidebarBottom {
-    border-top: 1px solid var(--border);
-    padding-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
+  .chatRow:hover, .chatRow.active { background: var(--hover); }
+  .chatRow .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chatRow .rowBtn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 3px; display: none; }
+  .chatRow:hover .rowBtn { display: inline-block; }
+  #sidebarBottom { border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+  #userLabel { font-size: 12px; color: var(--muted); padding: 6px 12px; }
 
   /* ---------- Main ---------- */
-  #main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    position: relative;
-  }
-  #topbar {
-    display: flex;
-    align-items: center;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
-    font-weight: 600;
-    font-size: 14px;
-    gap: 10px;
-  }
+  #main { flex: 1; display: flex; flex-direction: column; height: 100vh; position: relative; }
+  #topbar { display: flex; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; gap: 10px; }
   #menuToggle { display: none; background: none; border: none; font-size: 18px; color: var(--text); cursor: pointer; }
   #status { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: normal; }
+  #exportBtn { background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 12px; padding: 5px 10px; }
 
-  #hero {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 26px;
-    padding: 20px;
-  }
+  #hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; padding: 20px; }
   #hero h1 { font-size: 28px; font-weight: 600; margin: 0; }
 
-  #chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 25px 15%;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
+  #chat { flex: 1; overflow-y: auto; padding: 25px 15%; display: flex; flex-direction: column; gap: 18px; }
+  .bubble { max-width: 100%; border-radius: 16px; padding: 10px 16px; font-size: 15px; line-height: 1.6; word-wrap: break-word; position: relative; }
+  .bubble.user { align-self: flex-end; background: var(--accent); color: white; border-bottom-right-radius: 4px; max-width: 70%; white-space: pre-wrap; }
+  .bubble.ai { align-self: flex-start; background: var(--bubble-ai); border-bottom-left-radius: 4px; }
+  .bubble .name { display: block; font-size: 11px; font-weight: bold; margin-bottom: 4px; opacity: 0.7; }
+  .bubble .copyBtn {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px;
+    margin-top: 6px; padding: 0;
   }
-  .bubble {
-    max-width: 100%;
-    border-radius: 16px;
-    padding: 10px 16px;
-    font-size: 15px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-  .bubble.user {
-    align-self: flex-end;
-    background: var(--accent);
-    color: white;
-    border-bottom-right-radius: 4px;
-    max-width: 70%;
-  }
-  .bubble.ai {
-    align-self: flex-start;
-    background: var(--bubble-ai);
-    border-bottom-left-radius: 4px;
-  }
-  .bubble .name {
-    display: block;
-    font-size: 11px;
-    font-weight: bold;
-    margin-bottom: 4px;
-    opacity: 0.7;
-  }
+  .bubble .copyBtn:hover { color: var(--text); }
 
-  #fileChip {
-    display: none;
-    align-items: center;
-    gap: 8px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 6px 10px;
-    margin: 0 15% 8px 15%;
-    font-size: 12px;
-    max-width: fit-content;
-  }
-  #fileChip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  .typingDots span { display: inline-block; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typingDots span:nth-child(2) { animation-delay: 0.2s; }
+  .typingDots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
 
-  #inputWrap {
-    padding: 14px 15% 22px 15%;
-  }
-  #inputBar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 28px;
-    padding: 8px 8px 8px 16px;
-  }
-  #msgInput {
-    flex: 1;
-    border: none;
-    background: transparent;
-    color: var(--text);
-    font-size: 15px;
-    outline: none;
-    padding: 8px 0;
-  }
-  button.roundBtn {
-    background: transparent;
-    border: none;
-    color: var(--text);
-    border-radius: 50%;
-    width: 38px;
-    height: 38px;
-    cursor: pointer;
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
+  .previewCard { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; max-width: 90%; font-size: 12px; }
+  .previewCard table { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  .previewCard th, .previewCard td { border: 1px solid var(--border); padding: 4px 6px; text-align: left; }
+  .previewCard canvas { max-height: 160px; margin-top: 8px; }
+
+  #fileChips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 15% 8px 15%; }
+  .fileChip { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 5px 10px; font-size: 12px; }
+  .fileChip img { width: 22px; height: 22px; object-fit: cover; border-radius: 4px; }
+  .fileChip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+
+  #inputWrap { padding: 14px 15% 22px 15%; }
+  #inputBar { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 28px; padding: 8px 8px 8px 16px; }
+  #msgInput { flex: 1; border: none; background: transparent; color: var(--text); font-size: 15px; outline: none; padding: 8px 0; }
+  button.roundBtn { background: transparent; border: none; color: var(--text); border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   button.roundBtn:hover { background: var(--hover); }
-  button.roundBtn.active { color: #ff4d4f; }
-  #sendBtn {
-    background: var(--send-bg);
-    color: var(--bg);
-    border: none;
-    border-radius: 50%;
-    width: 38px;
-    height: 38px;
-    cursor: pointer;
-    font-size: 16px;
-    flex-shrink: 0;
-  }
-  #sendBtn:disabled { opacity: 0.4; cursor: default; }
+  button.roundBtn.active { color: var(--danger); }
+  #sendBtn { background: var(--send-bg); color: var(--bg); border: none; border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 16px; flex-shrink: 0; }
+  #sendBtn.stopMode { background: var(--danger); color: white; }
   #hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 8px; }
 
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
   @media (max-width: 768px) {
-    #sidebar {
-      position: fixed;
-      z-index: 20;
-      height: 100vh;
-      transform: translateX(-100%);
-    }
+    #sidebar { position: fixed; z-index: 20; height: 100vh; transform: translateX(-100%); }
     #sidebar.open { transform: translateX(0); }
     #menuToggle { display: block; }
-    #chat, #fileChip { padding-left: 5%; padding-right: 5%; }
+    #chat, #fileChips { padding-left: 5%; padding-right: 5%; }
     #inputWrap { padding-left: 5%; padding-right: 5%; }
   }
 </style>
 </head>
 <body>
 
+<div id="authScreen">
+  <div id="authBox">
+    <h2 id="authTitle">Log in</h2>
+    <input id="authUsername" placeholder="Username" autocomplete="username" />
+    <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
+    <div id="authError"></div>
+    <button class="primary" id="authSubmitBtn">Log in</button>
+    <div id="authToggle">Account nahi hai? <a id="authToggleLink">Sign up karo</a></div>
+  </div>
+</div>
+
 <div id="sidebar">
   <button class="sideBtn" id="newChatBtn">➕ New chat</button>
   <input id="searchInput" placeholder="🔍 Search chats" />
   <div id="chatList"></div>
   <div id="sidebarBottom">
+    <div id="userLabel"></div>
+    <button class="sideBtn" id="ttsBtn">🔊 Voice: On</button>
     <button class="sideBtn" id="themeBtn">🌙 Dark mode</button>
-    <button class="sideBtn" id="clearAllBtn">🗑️ Clear all chats</button>
+    <button class="sideBtn" id="logoutBtn">🚪 Logout</button>
   </div>
 </div>
 
@@ -275,23 +164,17 @@
     <button id="menuToggle">☰</button>
     <span id="chatTitle">Jarvis AI</span>
     <span id="status">🟢 Ready</span>
+    <button id="exportBtn">⬇️ Export</button>
   </div>
 
-  <div id="hero">
-    <h1>Where should we begin?</h1>
-  </div>
-
+  <div id="hero"><h1>Where should we begin?</h1></div>
   <div id="chat" style="display:none;"></div>
-
-  <div id="fileChip">
-    <span>📎</span><span class="fname"></span>
-    <button id="removeFileBtn">✕</button>
-  </div>
+  <div id="fileChips"></div>
 
   <div id="inputWrap">
     <div id="inputBar">
       <button class="roundBtn" id="attachBtn" title="File attach karo">📎</button>
-      <input type="file" id="fileInput" hidden accept="image/*,video/*,audio/*,.pdf,.txt,.csv,.xlsx,.xls,.docx" />
+      <input type="file" id="fileInput" hidden multiple accept="image/*,video/*,audio/*,.pdf,.txt,.csv,.xlsx,.xls,.docx" />
       <input id="msgInput" type="text" placeholder="Message Jarvis..." autocomplete="off" />
       <button class="roundBtn" id="micBtn" title="Bolke poocho">🎙️</button>
       <button id="sendBtn" title="Send">➤</button>
@@ -301,102 +184,166 @@
 </div>
 
 <script>
+// ============ Elements ============
+const authScreen = document.getElementById('authScreen');
+const authTitle = document.getElementById('authTitle');
+const authUsername = document.getElementById('authUsername');
+const authPassword = document.getElementById('authPassword');
+const authError = document.getElementById('authError');
+const authSubmitBtn = document.getElementById('authSubmitBtn');
+const authToggle = document.getElementById('authToggle');
+const authToggleLink = document.getElementById('authToggleLink');
+
 const sidebarEl = document.getElementById('sidebar');
 const chatListEl = document.getElementById('chatList');
 const searchInput = document.getElementById('searchInput');
 const newChatBtn = document.getElementById('newChatBtn');
 const themeBtn = document.getElementById('themeBtn');
-const clearAllBtn = document.getElementById('clearAllBtn');
+const ttsBtn = document.getElementById('ttsBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const userLabel = document.getElementById('userLabel');
 const menuToggle = document.getElementById('menuToggle');
 const chatTitleEl = document.getElementById('chatTitle');
+const exportBtn = document.getElementById('exportBtn');
 
 const heroEl = document.getElementById('hero');
 const chatEl = document.getElementById('chat');
+const fileChipsEl = document.getElementById('fileChips');
 const inputEl = document.getElementById('msgInput');
 const sendBtn = document.getElementById('sendBtn');
 const micBtn = document.getElementById('micBtn');
 const statusEl = document.getElementById('status');
 const attachBtn = document.getElementById('attachBtn');
 const fileInput = document.getElementById('fileInput');
-const fileChip = document.getElementById('fileChip');
-const removeFileBtn = document.getElementById('removeFileBtn');
 
-let chats = JSON.parse(localStorage.getItem('jarvis_chats') || '[]');
+let isSignup = false;
+let chats = [];
 let activeChatId = null;
-let attachedFile = null;
+let attachedFiles = [];
+let currentController = null;
+let isGenerating = false;
 
-function saveChats() {
-  localStorage.setItem('jarvis_chats', JSON.stringify(chats));
+// ============ Auth ============
+authToggleLink.addEventListener('click', () => {
+  isSignup = !isSignup;
+  authTitle.textContent = isSignup ? 'Sign up' : 'Log in';
+  authSubmitBtn.textContent = isSignup ? 'Sign up' : 'Log in';
+  authToggle.innerHTML = isSignup
+    ? 'Pehle se account hai? <a id="authToggleLink2">Log in karo</a>'
+    : 'Account nahi hai? <a id="authToggleLink">Sign up karo</a>';
+  const relink = document.getElementById('authToggleLink2') || document.getElementById('authToggleLink');
+  relink.addEventListener('click', () => authToggleLink.dispatchEvent(new Event('click')));
+  authError.textContent = '';
+});
+
+authSubmitBtn.addEventListener('click', async () => {
+  const username = authUsername.value.trim();
+  const password = authPassword.value;
+  if (!username || !password) { authError.textContent = 'Username aur password dono bharo.'; return; }
+
+  const fd = new FormData();
+  fd.append('username', username);
+  fd.append('password', password);
+
+  const res = await fetch(isSignup ? '/api/signup' : '/api/login', { method: 'POST', body: fd });
+  const data = await res.json();
+  if (!res.ok) { authError.textContent = data.error || 'Kuch galat ho gaya.'; return; }
+
+  authScreen.style.display = 'none';
+  userLabel.textContent = '👤 ' + data.username;
+  await loadChats();
+  showHero();
+});
+
+logoutBtn.addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.reload();
+});
+
+async function checkAuth() {
+  const res = await fetch('/api/me');
+  if (res.ok) {
+    const data = await res.json();
+    authScreen.style.display = 'none';
+    userLabel.textContent = '👤 ' + data.username;
+    await loadChats();
+    showHero();
+  } else {
+    authScreen.style.display = 'flex';
+  }
 }
 
-// ---------- Theme ----------
+// ============ Theme ============
 function applyTheme(mode) {
-  if (mode === 'dark') {
-    document.body.classList.add('dark');
-    themeBtn.textContent = '☀️ Light mode';
-  } else {
-    document.body.classList.remove('dark');
-    themeBtn.textContent = '🌙 Dark mode';
-  }
+  if (mode === 'dark') { document.body.classList.add('dark'); themeBtn.textContent = '☀️ Light mode'; }
+  else { document.body.classList.remove('dark'); themeBtn.textContent = '🌙 Dark mode'; }
   localStorage.setItem('jarvis_theme', mode);
 }
 applyTheme(localStorage.getItem('jarvis_theme') || 'light');
-themeBtn.addEventListener('click', () => {
-  applyTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
-});
+themeBtn.addEventListener('click', () => applyTheme(document.body.classList.contains('dark') ? 'light' : 'dark'));
 
-// ---------- Sidebar toggle (mobile) ----------
+// ============ TTS toggle ============
+function applyTts(mode) {
+  ttsBtn.textContent = mode === 'on' ? '🔊 Voice: On' : '🔇 Voice: Off';
+  localStorage.setItem('jarvis_tts', mode);
+}
+applyTts(localStorage.getItem('jarvis_tts') || 'on');
+ttsBtn.addEventListener('click', () => applyTts(localStorage.getItem('jarvis_tts') === 'on' ? 'off' : 'on'));
+
+// ============ Sidebar toggle (mobile) ============
 menuToggle.addEventListener('click', () => sidebarEl.classList.toggle('open'));
 
-// ---------- Sidebar rendering ----------
+// ============ Chat list ============
+async function loadChats() {
+  const res = await fetch('/api/chats');
+  chats = res.ok ? await res.json() : [];
+  renderSidebar();
+}
+
 function renderSidebar(filter = '') {
   chatListEl.innerHTML = '';
   const f = filter.trim().toLowerCase();
-  chats
-    .filter(c => !f || c.title.toLowerCase().includes(f))
-    .slice().reverse()
-    .forEach(c => {
-      const item = document.createElement('div');
-      item.className = 'chatItem' + (c.id === activeChatId ? ' active' : '');
-      item.textContent = c.title;
-      item.addEventListener('click', () => selectChat(c.id));
-      chatListEl.appendChild(item);
+  chats.filter(c => !f || c.title.toLowerCase().includes(f)).forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'chatRow' + (c.id === activeChatId ? ' active' : '');
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = c.title;
+    title.addEventListener('click', () => selectChat(c.id));
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'rowBtn'; renameBtn.textContent = '✏️';
+    renameBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const newTitle = prompt('Naya naam:', c.title);
+      if (!newTitle) return;
+      const fd = new FormData(); fd.append('title', newTitle);
+      await fetch(`/api/chats/${c.id}`, { method: 'PUT', body: fd });
+      c.title = newTitle;
+      renderSidebar(searchInput.value);
+      if (c.id === activeChatId) chatTitleEl.textContent = newTitle;
     });
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'rowBtn'; delBtn.textContent = '🗑️';
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Ye chat delete karni hai?')) return;
+      await fetch(`/api/chats/${c.id}`, { method: 'DELETE' });
+      chats = chats.filter(x => x.id !== c.id);
+      if (activeChatId === c.id) { activeChatId = null; showHero(); }
+      renderSidebar(searchInput.value);
+    });
+
+    row.appendChild(title); row.appendChild(renameBtn); row.appendChild(delBtn);
+    chatListEl.appendChild(row);
+  });
 }
 searchInput.addEventListener('input', () => renderSidebar(searchInput.value));
 
-// ---------- Chat bubble rendering ----------
-function addBubble(text, isUser) {
-  const b = document.createElement('div');
-  b.className = 'bubble ' + (isUser ? 'user' : 'ai');
-  const name = document.createElement('span');
-  name.className = 'name';
-  name.textContent = isUser ? '👤 You' : '🤖 Jarvis';
-  const body = document.createElement('span');
-  body.textContent = text;
-  b.appendChild(name);
-  b.appendChild(body);
-  chatEl.appendChild(b);
-  chatEl.scrollTop = chatEl.scrollHeight;
-  return body;
-}
+function showHero() { heroEl.style.display = 'flex'; chatEl.style.display = 'none'; chatTitleEl.textContent = 'Jarvis AI'; }
+function showChatView() { heroEl.style.display = 'none'; chatEl.style.display = 'flex'; }
 
-function renderMessages(chat) {
-  chatEl.innerHTML = '';
-  chat.messages.forEach(m => addBubble(m.text, m.role === 'user'));
-}
-
-function showHero() {
-  heroEl.style.display = 'flex';
-  chatEl.style.display = 'none';
-  chatTitleEl.textContent = 'Jarvis AI';
-}
-function showChat() {
-  heroEl.style.display = 'none';
-  chatEl.style.display = 'flex';
-}
-
-// ---------- New chat / select chat ----------
 newChatBtn.addEventListener('click', () => {
   activeChatId = null;
   showHero();
@@ -404,99 +351,182 @@ newChatBtn.addEventListener('click', () => {
   sidebarEl.classList.remove('open');
 });
 
-function selectChat(id) {
-  const chat = chats.find(c => c.id === id);
-  if (!chat) return;
+async function selectChat(id) {
+  const c = chats.find(x => x.id === id);
+  if (!c) return;
   activeChatId = id;
-  chatTitleEl.textContent = chat.title;
-  showChat();
-  renderMessages(chat);
-  renderSidebar(searchInput.value);
+  chatTitleEl.textContent = c.title;
+  showChatView();
   sidebarEl.classList.remove('open');
-}
-
-clearAllBtn.addEventListener('click', () => {
-  if (!confirm('Sab chats delete karni hain?')) return;
-  chats = [];
-  activeChatId = null;
-  saveChats();
-  showHero();
-  renderSidebar();
-});
-
-async function ensureActiveChat(firstMessageText) {
-  if (activeChatId) return chats.find(c => c.id === activeChatId);
-  const res = await fetch('/api/session', { method: 'POST' });
-  const data = await res.json();
-  const title = (firstMessageText || 'File chat').slice(0, 30) || 'New chat';
-  const chat = { id: data.session_id, title, messages: [] };
-  chats.push(chat);
-  activeChatId = chat.id;
-  saveChats();
   renderSidebar(searchInput.value);
-  return chat;
+
+  chatEl.innerHTML = '';
+  const res = await fetch(`/api/chats/${id}/messages`);
+  const msgs = res.ok ? await res.json() : [];
+  msgs.forEach(m => addBubble(m.text, m.role === 'user'));
 }
 
-// ---------- File attach ----------
-attachBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => {
-  attachedFile = e.target.files[0] || null;
-  updateFileChip();
-});
-removeFileBtn.addEventListener('click', () => {
-  attachedFile = null;
-  updateFileChip();
-});
-function updateFileChip() {
-  if (attachedFile) {
-    fileChip.style.display = 'flex';
-    fileChip.querySelector('.fname').textContent = attachedFile.name;
-  } else {
-    fileChip.style.display = 'none';
-    fileInput.value = '';
+async function ensureActiveChat() {
+  if (activeChatId) return activeChatId;
+  const res = await fetch('/api/chats', { method: 'POST' });
+  const data = await res.json();
+  chats.unshift(data);
+  activeChatId = data.id;
+  renderSidebar(searchInput.value);
+  return data.id;
+}
+
+// ============ Bubbles ============
+function renderMarkdown(text) {
+  const raw = marked.parse(text || '');
+  return DOMPurify.sanitize(raw);
+}
+
+function addBubble(text, isUser) {
+  const b = document.createElement('div');
+  b.className = 'bubble ' + (isUser ? 'user' : 'ai');
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = isUser ? '👤 You' : '🤖 Jarvis';
+  const body = document.createElement('div');
+  body.className = 'body';
+  if (isUser) { body.textContent = text; }
+  else { body.innerHTML = renderMarkdown(text); }
+  b.appendChild(name); b.appendChild(body);
+
+  if (!isUser) {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copyBtn';
+    copyBtn.textContent = '📋 Copy';
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(body.dataset.raw || text);
+      copyBtn.textContent = '✅ Copied';
+      setTimeout(() => copyBtn.textContent = '📋 Copy', 1500);
+    });
+    b.appendChild(copyBtn);
   }
+  body.dataset.raw = text;
+  chatEl.appendChild(b);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return body;
+}
+
+function addTypingBubble() {
+  const b = document.createElement('div');
+  b.className = 'bubble ai';
+  b.innerHTML = '<span class="name">🤖 Jarvis</span><div class="body typingDots"><span></span><span></span><span></span></div>';
+  chatEl.appendChild(b);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return b.querySelector('.body');
+}
+
+function renderFilePreview(p) {
+  const card = document.createElement('div');
+  card.className = 'previewCard';
+  let html = `<b>📊 ${p.filename}</b>`;
+  if (p.columns && p.rows) {
+    html += '<table><tr>' + p.columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
+    p.rows.forEach(r => { html += '<tr>' + r.map(v => `<td>${v}</td>`).join('') + '</tr>'; });
+    html += '</table>';
+  }
+  card.innerHTML = html;
+  if (p.chart && p.chart.values && p.chart.values.length) {
+    const canvas = document.createElement('canvas');
+    card.appendChild(canvas);
+    chatEl.appendChild(card);
+    new Chart(canvas, {
+      type: 'bar',
+      data: { labels: p.chart.values.map((_, i) => i + 1), datasets: [{ label: p.chart.label, data: p.chart.values, backgroundColor: '#10a37f' }] },
+      options: { plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false }
+    });
+  } else {
+    chatEl.appendChild(card);
+  }
+  chatEl.scrollTop = chatEl.scrollHeight;
 }
 
 function speak(text) {
+  if (localStorage.getItem('jarvis_tts') === 'off') return;
   if (!('speechSynthesis' in window)) return;
   const utter = new SpeechSynthesisUtterance(text);
   utter.rate = 1.0;
   window.speechSynthesis.speak(utter);
 }
 
-// ---------- Send message ----------
+// ============ File attach ============
+attachBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => {
+  attachedFiles = attachedFiles.concat(Array.from(e.target.files)).slice(0, 5);
+  renderFileChips();
+});
+function renderFileChips() {
+  fileChipsEl.innerHTML = '';
+  attachedFiles.forEach((f, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'fileChip';
+    if (f.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(f);
+      chip.appendChild(img);
+    } else {
+      chip.appendChild(document.createTextNode('📎'));
+    }
+    const name = document.createElement('span');
+    name.textContent = f.name;
+    chip.appendChild(name);
+    const rm = document.createElement('button');
+    rm.textContent = '✕';
+    rm.addEventListener('click', () => { attachedFiles.splice(idx, 1); renderFileChips(); });
+    chip.appendChild(rm);
+    fileChipsEl.appendChild(chip);
+  });
+  if (attachedFiles.length === 0) fileInput.value = '';
+}
+
+// ============ Send / Stop ============
+function setGenerating(state) {
+  isGenerating = state;
+  sendBtn.textContent = state ? '■' : '➤';
+  sendBtn.classList.toggle('stopMode', state);
+}
+
+sendBtn.addEventListener('click', () => {
+  if (isGenerating) { if (currentController) currentController.abort(); return; }
+  sendMessage(inputEl.value);
+});
+inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isGenerating) sendMessage(inputEl.value); });
+
 async function sendMessage(text) {
-  if (!text.trim() && !attachedFile) return;
+  if (!text.trim() && attachedFiles.length === 0) return;
 
-  const fileToSend = attachedFile;
-  const displayText = text.trim() || ('📎 ' + (fileToSend ? fileToSend.name : ''));
+  const filesToSend = attachedFiles;
+  const displayText = text.trim() || ('📎 ' + filesToSend.map(f => f.name).join(', '));
   inputEl.value = '';
-  attachedFile = null;
-  updateFileChip();
+  attachedFiles = [];
+  renderFileChips();
 
-  const chat = await ensureActiveChat(displayText);
-  showChat();
-
-  chat.messages.push({ role: 'user', text: displayText });
+  const chatId = await ensureActiveChat();
+  showChatView();
   addBubble(displayText, true);
-  saveChats();
-  renderSidebar(searchInput.value);
 
-  const aiBodyEl = addBubble('...', false);
+  const aiBodyEl = addTypingBubble();
   statusEl.textContent = '🧠 Soch raha hoon...';
-  sendBtn.disabled = true;
+  setGenerating(true);
+  currentController = new AbortController();
 
   const formData = new FormData();
   formData.append('message', text);
-  formData.append('session_id', chat.id);
-  if (fileToSend) formData.append('file', fileToSend);
+  formData.append('chat_id', chatId);
+  filesToSend.forEach(f => formData.append('files', f));
+
+  let finalText = '';
+  let gotFirstChunk = false;
 
   try {
-    const res = await fetch('/api/chat', { method: 'POST', body: formData });
+    const res = await fetch('/api/chat', { method: 'POST', body: formData, signal: currentController.signal });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let finalText = '';
 
     while (true) {
       const { value, done } = await reader.read();
@@ -508,11 +538,16 @@ async function sendMessage(text) {
       for (const part of parts) {
         if (!part.startsWith('data: ')) continue;
         const payload = JSON.parse(part.slice(6));
-        if (payload.chunk) {
+        if (payload.previews) {
+          payload.previews.forEach(renderFilePreview);
+        } else if (payload.chunk) {
+          if (!gotFirstChunk) { aiBodyEl.classList.remove('typingDots'); aiBodyEl.innerHTML = ''; gotFirstChunk = true; }
           finalText += payload.chunk;
-          aiBodyEl.textContent = finalText;
+          aiBodyEl.innerHTML = renderMarkdown(finalText);
+          aiBodyEl.dataset.raw = finalText;
           chatEl.scrollTop = chatEl.scrollHeight;
         } else if (payload.error) {
+          aiBodyEl.classList.remove('typingDots');
           aiBodyEl.textContent = '⚠️ ' + payload.error;
         } else if (payload.done) {
           statusEl.textContent = '🟢 Ready';
@@ -520,19 +555,39 @@ async function sendMessage(text) {
         }
       }
     }
-    chat.messages.push({ role: 'ai', text: finalText || aiBodyEl.textContent });
-    saveChats();
+    const c = chats.find(x => x.id === chatId);
+    if (c && c.title === 'New chat') { c.title = displayText.slice(0, 40); renderSidebar(searchInput.value); }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      statusEl.textContent = '🟢 Ready';
+      aiBodyEl.classList.remove('typingDots');
+      if (!finalText) aiBodyEl.textContent = '⏹️ Rok diya gaya.';
+    } else {
+      aiBodyEl.textContent = '⚠️ Network error: ' + err.message;
+    }
   } finally {
-    sendBtn.disabled = false;
+    setGenerating(false);
+    currentController = null;
   }
 }
 
-sendBtn.addEventListener('click', () => sendMessage(inputEl.value));
-inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') sendMessage(inputEl.value);
+// ============ Export ============
+exportBtn.addEventListener('click', () => {
+  if (!activeChatId) return;
+  const bubbles = Array.from(chatEl.querySelectorAll('.bubble')).map(b => {
+    const who = b.classList.contains('user') ? 'You' : 'Jarvis';
+    const body = b.querySelector('.body');
+    return `${who}: ${body ? body.dataset.raw || body.textContent : ''}`;
+  }).join('\n\n');
+  const blob = new Blob([bubbles], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = (chatTitleEl.textContent || 'chat') + '.txt';
+  a.click();
+  URL.revokeObjectURL(url);
 });
 
-// 🎙️ Voice input (Chrome/Edge — Web Speech API)
+// ============ Voice input ============
 let recognizing = false;
 let recognition = null;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -541,30 +596,17 @@ if (SpeechRecognition) {
   recognition.continuous = false;
   recognition.interimResults = false;
   recognition.lang = 'hi-IN';
-
-  recognition.onstart = () => {
-    recognizing = true;
-    micBtn.classList.add('active');
-    statusEl.textContent = '🎙️ Sun raha hoon...';
-  };
-  recognition.onend = () => {
-    recognizing = false;
-    micBtn.classList.remove('active');
-    statusEl.textContent = '🟢 Ready';
-  };
+  recognition.onstart = () => { recognizing = true; micBtn.classList.add('active'); statusEl.textContent = '🎙️ Sun raha hoon...'; };
+  recognition.onend = () => { recognizing = false; micBtn.classList.remove('active'); statusEl.textContent = '🟢 Ready'; };
   recognition.onresult = (event) => sendMessage(event.results[0][0].transcript);
-  micBtn.addEventListener('click', () => {
-    if (recognizing) { recognition.stop(); return; }
-    recognition.start();
-  });
+  micBtn.addEventListener('click', () => { if (recognizing) { recognition.stop(); return; } recognition.start(); });
 } else {
   micBtn.disabled = true;
   micBtn.title = 'Yeh browser voice input support nahi karta (Chrome try karo)';
 }
 
-// ---------- Init ----------
-renderSidebar();
-showHero();
+// ============ Init ============
+checkAuth();
 </script>
 
 </body>
