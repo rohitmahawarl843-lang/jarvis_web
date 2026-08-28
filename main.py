@@ -1,28 +1,32 @@
 """
-Jarvis AI — Web/Server Version
-Browser se chalta hai, kisi bhi domain par deploy ho sakta hai.
-(Windows PC-control features iss version mein NAHI hain — server
-sirf apna khud ka OS control kar sakta hai, kisi user ke ghar ke
-PC ka nahi.)
+Jarvis AI — Web Version (with login, DB-backed chat history, files, etc.)
 """
 import os
 import io
 import json
 import uuid
+import secrets
+import hashlib
+import sqlite3
 import mimetypes
+from contextlib import contextmanager
+from typing import List
 
-from fastapi import FastAPI, Request, Form, File, UploadFile
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import FastAPI, Request, Response, Form, File, UploadFile
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from google import genai
 from google.genai import types
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_DIR = os.path.join(APP_DIR, "data")
+os.makedirs(DB_DIR, exist_ok=True)
+DB_PATH = os.path.join(DB_DIR, "jarvis.db")
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")  # fast/low-latency
-MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+DAILY_MESSAGE_LIMIT = int(os.environ.get("DAILY_MESSAGE_LIMIT", "0"))  # 0 = no limit
 
 SYSTEM_PROMPT = """You are Jarvis, a friendly AI assistant.
 You speak in Hinglish naturally. Be helpful and concise.
@@ -32,76 +36,148 @@ summary/analysis do."""
 
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
-# Simple in-memory per-browser-session chat history.
-# NOTE: yeh server restart hone par (ya scale-out/multiple instances par)
-# khatam ho jaata hai. Production ke liye Redis/DB use karo.
-sessions = {}
+# ---------------- Database ----------------
 
-# Mime types jo Gemini seedha (inline) samajh leta hai
+@contextmanager
+def db_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def init_db():
+    with db_conn() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            salt TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS chats (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL DEFAULT 'New chat',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        db.commit()
+
+init_db()
+
+# ---------------- Auth helpers ----------------
+
+def hash_password(password: str, salt: str = None):
+    salt = salt or secrets.token_hex(16)
+    pwd_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
+    return salt, pwd_hash
+
+
+def verify_password(password: str, salt: str, expected_hash: str) -> bool:
+    _, computed = hash_password(password, salt)
+    return secrets.compare_digest(computed, expected_hash)
+
+
+def get_current_user(request: Request):
+    token = request.cookies.get("session_token")
+    if not token:
+        return None
+    with db_conn() as db:
+        row = db.execute(
+            "SELECT u.id, u.username FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ?",
+            (token,),
+        ).fetchone()
+    return row
+
+
+def unauth():
+    return JSONResponse({"error": "Login required"}, status_code=401)
+
+
+# ---------------- File handling ----------------
+
 INLINE_PREFIXES = ("image/", "video/", "audio/")
 INLINE_EXACT = {
-    "application/pdf",
-    "text/plain",
-    "text/csv",
-    "text/html",
-    "text/xml",
-    "text/rtf",
-    "text/markdown",
+    "application/pdf", "text/plain", "text/csv",
+    "text/html", "text/xml", "text/rtf", "text/markdown",
 }
 
 
+def make_preview(filename: str, df):
+    try:
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        chart = None
+        if numeric_cols:
+            col = numeric_cols[0]
+            sample = df[col].head(10).fillna(0).tolist()
+            chart = {"label": col, "values": [float(x) for x in sample]}
+        return {
+            "filename": filename,
+            "columns": [str(c) for c in df.columns.tolist()],
+            "rows": df.head(5).fillna("").astype(str).values.tolist(),
+            "chart": chart,
+        }
+    except Exception:
+        return None
+
+
 def build_file_part(filename: str, content_type: str, data: bytes):
-    """Uploaded file ko Gemini ke liye sahi Part mein convert karta hai."""
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     mime = (content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream").split(";")[0].strip()
 
-    # Excel spreadsheets -> CSV text mein convert karo (Gemini xlsx seedha nahi leta)
     if ext in ("xlsx", "xls"):
         try:
             import pandas as pd
-            sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
-            chunks = []
-            for name, df in sheets.items():
-                chunks.append(f"--- Sheet: {name} ---\n{df.to_csv(index=False)}")
-            csv_text = "\n\n".join(chunks)
-            return types.Part.from_text(text=f"[Uploaded spreadsheet: {filename}]\n{csv_text}")
+            df = pd.read_excel(io.BytesIO(data))
+            csv_text = df.to_csv(index=False)
+            preview = make_preview(filename, df)
+            return types.Part.from_text(text=f"[Uploaded spreadsheet: {filename}]\n{csv_text[:6000]}"), preview
         except Exception as e:
-            return types.Part.from_text(text=f"[Spreadsheet '{filename}' padhne mein error: {e}]")
+            return types.Part.from_text(text=f"[Spreadsheet '{filename}' padhne mein error: {e}]"), None
 
-    # Word documents -> text extract karo
+    if ext == "csv":
+        try:
+            import pandas as pd
+            df = pd.read_csv(io.BytesIO(data))
+            preview = make_preview(filename, df)
+            return types.Part.from_bytes(data=data, mime_type="text/csv"), preview
+        except Exception:
+            return types.Part.from_bytes(data=data, mime_type="text/csv"), None
+
     if ext == "docx":
         try:
             import docx
             doc = docx.Document(io.BytesIO(data))
             text = "\n".join(p.text for p in doc.paragraphs)
-            return types.Part.from_text(text=f"[Uploaded document: {filename}]\n{text}")
+            return types.Part.from_text(text=f"[Uploaded document: {filename}]\n{text[:8000]}"), None
         except Exception as e:
-            return types.Part.from_text(text=f"[Document '{filename}' padhne mein error: {e}]")
+            return types.Part.from_text(text=f"[Document '{filename}' padhne mein error: {e}]"), None
 
-    # Images, video, audio, pdf, plain-text formats — Gemini inline le leta hai
     if mime.startswith(INLINE_PREFIXES) or mime in INLINE_EXACT:
-        return types.Part.from_bytes(data=data, mime_type=mime)
+        return types.Part.from_bytes(data=data, mime_type=mime), None
 
-    # Fallback: text ke roop mein decode karne ki koshish
     try:
         text = data.decode("utf-8", errors="ignore")
-        return types.Part.from_text(text=f"[Uploaded file: {filename}]\n{text}")
+        return types.Part.from_text(text=f"[Uploaded file: {filename}]\n{text[:8000]}"), None
     except Exception:
-        return types.Part.from_text(text=f"[File '{filename}' (type: {mime}) is format mein analyze nahi ho saka]")
+        return types.Part.from_text(text=f"[File '{filename}' (type: {mime}) analyze nahi ho saka]"), None
 
 
-def get_chat_session(session_id: str):
-    if session_id not in sessions:
-        sessions[session_id] = client.chats.create(
-            model=MODEL,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=800,
-                temperature=0.7,
-            ),
-        )
-    return sessions[session_id]
-
+# ---------------- App ----------------
 
 app = FastAPI(title="Jarvis AI Web")
 app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
@@ -117,67 +193,249 @@ def health():
     return {"status": "ok", "api_key_configured": bool(API_KEY)}
 
 
-@app.post("/api/session")
-def new_session():
-    return {"session_id": str(uuid.uuid4())}
+# ---------------- Auth routes ----------------
 
+@app.post("/api/signup")
+async def signup(response: Response, username: str = Form(...), password: str = Form(...)):
+    username = username.strip()
+    if len(username) < 3 or len(password) < 4:
+        return JSONResponse({"error": "Username kam se kam 3 aur password kam se kam 4 characters ka ho."}, status_code=400)
+
+    salt, pwd_hash = hash_password(password)
+    try:
+        with db_conn() as db:
+            db.execute("INSERT INTO users (username, salt, password_hash) VALUES (?, ?, ?)", (username, salt, pwd_hash))
+            db.commit()
+            user_id = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()["id"]
+    except sqlite3.IntegrityError:
+        return JSONResponse({"error": "Ye username pehle se liya gaya hai."}, status_code=400)
+
+    token = secrets.token_urlsafe(32)
+    with db_conn() as db:
+        db.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
+        db.commit()
+
+    response.set_cookie("session_token", token, httponly=True, max_age=60 * 60 * 24 * 30, samesite="lax")
+    return {"username": username}
+
+
+@app.post("/api/login")
+async def login(response: Response, username: str = Form(...), password: str = Form(...)):
+    with db_conn() as db:
+        row = db.execute("SELECT * FROM users WHERE username=?", (username.strip(),)).fetchone()
+
+    if not row or not verify_password(password, row["salt"], row["password_hash"]):
+        return JSONResponse({"error": "Username ya password galat hai."}, status_code=400)
+
+    token = secrets.token_urlsafe(32)
+    with db_conn() as db:
+        db.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, row["id"]))
+        db.commit()
+
+    response.set_cookie("session_token", token, httponly=True, max_age=60 * 60 * 24 * 30, samesite="lax")
+    return {"username": row["username"]}
+
+
+@app.post("/api/logout")
+def logout(request: Request, response: Response):
+    token = request.cookies.get("session_token")
+    if token:
+        with db_conn() as db:
+            db.execute("DELETE FROM sessions WHERE token=?", (token,))
+            db.commit()
+    response.delete_cookie("session_token")
+    return {"status": "logged out"}
+
+
+@app.get("/api/me")
+def me(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return unauth()
+    return {"username": user["username"]}
+
+
+# ---------------- Chat CRUD ----------------
+
+@app.get("/api/chats")
+def list_chats(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return unauth()
+    with db_conn() as db:
+        rows = db.execute(
+            "SELECT id, title, created_at FROM chats WHERE user_id=? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/chats")
+def create_chat(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return unauth()
+    chat_id = str(uuid.uuid4())
+    with db_conn() as db:
+        db.execute("INSERT INTO chats (id, user_id, title) VALUES (?, ?, ?)", (chat_id, user["id"], "New chat"))
+        db.commit()
+    return {"id": chat_id, "title": "New chat"}
+
+
+@app.get("/api/chats/{chat_id}/messages")
+def get_messages(chat_id: str, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return unauth()
+    with db_conn() as db:
+        chat_row = db.execute("SELECT id FROM chats WHERE id=? AND user_id=?", (chat_id, user["id"])).fetchone()
+        if not chat_row:
+            return JSONResponse({"error": "Chat not found"}, status_code=404)
+        rows = db.execute(
+            "SELECT role, text, created_at FROM messages WHERE chat_id=? ORDER BY id ASC", (chat_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.put("/api/chats/{chat_id}")
+async def rename_chat(chat_id: str, request: Request, title: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return unauth()
+    with db_conn() as db:
+        db.execute("UPDATE chats SET title=? WHERE id=? AND user_id=?", (title.strip()[:60] or "New chat", chat_id, user["id"]))
+        db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/api/chats/{chat_id}")
+def delete_chat(chat_id: str, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return unauth()
+    with db_conn() as db:
+        db.execute("DELETE FROM messages WHERE chat_id=?", (chat_id,))
+        db.execute("DELETE FROM chats WHERE id=? AND user_id=?", (chat_id, user["id"]))
+        db.commit()
+    return {"status": "deleted"}
+
+
+# ---------------- Main chat endpoint ----------------
 
 @app.post("/api/chat")
 async def chat(
+    request: Request,
     message: str = Form(""),
-    session_id: str = Form("default"),
-    file: UploadFile = File(None),
+    chat_id: str = Form(...),
+    files: List[UploadFile] = File(default=[]),
 ):
-    text = (message or "").strip()
+    user = get_current_user(request)
+    if not user:
+        def unauth_stream():
+            yield f"data: {json.dumps({'error': 'Pehle login karo.'})}\n\n"
+        return StreamingResponse(unauth_stream(), media_type="text/event-stream")
 
     if not client:
         def err_stream():
             yield f"data: {json.dumps({'error': 'Server par GEMINI_API_KEY set nahi hai.'})}\n\n"
         return StreamingResponse(err_stream(), media_type="text/event-stream")
 
-    has_file = file is not None and bool(file.filename)
+    with db_conn() as db:
+        chat_row = db.execute("SELECT * FROM chats WHERE id=? AND user_id=?", (chat_id, user["id"])).fetchone()
+    if not chat_row:
+        def nf_stream():
+            yield f"data: {json.dumps({'error': 'Chat nahi mila.'})}\n\n"
+        return StreamingResponse(nf_stream(), media_type="text/event-stream")
 
-    if not text and not has_file:
+    if DAILY_MESSAGE_LIMIT > 0:
+        with db_conn() as db:
+            count = db.execute(
+                """SELECT COUNT(*) c FROM messages m JOIN chats c2 ON m.chat_id = c2.id
+                   WHERE c2.user_id=? AND m.role='user' AND date(m.created_at) = date('now')""",
+                (user["id"],),
+            ).fetchone()["c"]
+        if count >= DAILY_MESSAGE_LIMIT:
+            def limit_stream():
+                yield f"data: {json.dumps({'error': f'Aaj ka {DAILY_MESSAGE_LIMIT} messages ka limit khatam ho gaya. Kal try karo.'})}\n\n"
+            return StreamingResponse(limit_stream(), media_type="text/event-stream")
+
+    text = (message or "").strip()
+    real_files = [f for f in files if f and f.filename]
+
+    if not text and not real_files:
         def empty_stream():
             yield f"data: {json.dumps({'done': True})}\n\n"
         return StreamingResponse(empty_stream(), media_type="text/event-stream")
 
-    chat_session = get_chat_session(session_id)
+    file_parts = []
+    previews = []
+    for f in real_files:
+        data = await f.read()
+        part, preview = build_file_part(f.filename, f.content_type, data)
+        file_parts.append(part)
+        if preview:
+            previews.append(preview)
 
-    parts = []
-    if has_file:
-        data = await file.read()
-        parts.append(build_file_part(file.filename, file.content_type, data))
+    display_text = text or "Attached file(s) ka data analyze karo."
 
-    parts.append(types.Part.from_text(
-        text=text or "Is attached file ka data dhyan se dekho aur uska summary/analysis do."
-    ))
+    with db_conn() as db:
+        history_rows = db.execute(
+            "SELECT role, text FROM messages WHERE chat_id=? ORDER BY id ASC", (chat_id,)
+        ).fetchall()
+
+    contents = []
+    for row in history_rows:
+        role = "user" if row["role"] == "user" else "model"
+        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=row["text"])]))
+
+    current_parts = list(file_parts) + [types.Part.from_text(text=display_text)]
+    contents.append(types.Content(role="user", parts=current_parts))
+
+    with db_conn() as db:
+        db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "user", display_text))
+        if chat_row["title"] == "New chat":
+            db.execute("UPDATE chats SET title=? WHERE id=?", (display_text[:40], chat_id))
+        db.commit()
 
     def event_stream():
+        full_text = ""
         try:
-            for chunk in chat_session.send_message_stream(parts):
+            if previews:
+                yield f"data: {json.dumps({'previews': previews})}\n\n"
+            stream = client.models.generate_content_stream(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    max_output_tokens=800,
+                    temperature=0.7,
+                ),
+            )
+            for chunk in stream:
                 if chunk.text:
+                    full_text += chunk.text
                     yield f"data: {json.dumps({'chunk': chunk.text})}\n\n"
+            with db_conn() as db:
+                db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "ai", full_text))
+                db.commit()
             yield f"data: {json.dumps({'done': True})}\n\n"
+        except GeneratorExit:
+            if full_text:
+                with db_conn() as db:
+                    db.execute(
+                        "INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)",
+                        (chat_id, "ai", full_text + "\n\n[User ne rok diya]"),
+                    )
+                    db.commit()
+            raise
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # nginx buffering off — streaming fast rahe
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.post("/api/clear")
-async def clear(request: Request):
-    body = await request.json()
-    session_id = body.get("session_id") or "default"
-    sessions.pop(session_id, None)
-    return {"status": "cleared"}
 
 
 if __name__ == "__main__":
