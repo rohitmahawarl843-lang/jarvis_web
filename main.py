@@ -1,7 +1,7 @@
 """
 Jarvis AI — Web Version
-Login optional: logged-in users get saved chat history (DB).
-Guests can chat freely but nothing is saved — refresh = new chat.
+Login optional (guests get no persistence). Supports file analysis,
+optional Web Search tool, and optional Code Execution tool.
 """
 import os
 import io
@@ -34,12 +34,13 @@ SYSTEM_PROMPT = """You are Jarvis, a friendly AI assistant.
 You speak in Hinglish naturally. Be helpful and concise.
 Agar user koi file (image, video, PDF, spreadsheet, document) attach kare,
 uska data dhyan se dekho/padho aur uske sawaal ka sahi jawab do ya data ka
-summary/analysis do."""
+summary/analysis do.
+Agar Web Search tool available hai, current/real-time info (news, weather,
+prices) ke liye zaroor use karo. Agar Code Execution tool available hai,
+code ko actually chala kar result verify karo, sirf likh kar mat do."""
 
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
-# In-memory storage for GUEST (not logged in) conversations.
-# Resets on server restart — by design, guests don't get persistence.
 guest_sessions = {}
 
 # ---------------- Database ----------------
@@ -181,6 +182,17 @@ def build_file_part(filename: str, content_type: str, data: bytes):
         return types.Part.from_text(text=f"[Uploaded file: {filename}]\n{text[:8000]}"), None
     except Exception:
         return types.Part.from_text(text=f"[File '{filename}' (type: {mime}) analyze nahi ho saka]"), None
+
+
+def get_tools(mode: str):
+    """mode: 'search' | 'code' | anything else = none.
+    Search grounding aur Code Execution ek saath enable nahi ho sakte,
+    isliye per-message ek hi tool use hota hai."""
+    if mode == "search":
+        return [types.Tool(google_search=types.GoogleSearch())]
+    if mode == "code":
+        return [types.Tool(code_execution=types.ToolCodeExecution())]
+    return None
 
 
 # ---------------- App ----------------
@@ -326,16 +338,17 @@ def delete_chat(chat_id: str, request: Request):
     return {"status": "deleted"}
 
 
-# ---------------- Main chat endpoint (works logged-in OR guest) ----------------
+# ---------------- Main chat endpoint ----------------
 
 @app.post("/api/chat")
 async def chat(
     request: Request,
     message: str = Form(""),
     chat_id: str = Form(...),
+    mode: str = Form("none"),
     files: List[UploadFile] = File(default=[]),
 ):
-    user = get_current_user(request)  # None if guest — that's fine now
+    user = get_current_user(request)
 
     if not client:
         def err_stream():
@@ -350,7 +363,6 @@ async def chat(
             yield f"data: {json.dumps({'done': True})}\n\n"
         return StreamingResponse(empty_stream(), media_type="text/event-stream")
 
-    # Logged-in-only: verify chat + rate limit
     chat_row = None
     if user:
         with db_conn() as db:
@@ -383,7 +395,6 @@ async def chat(
 
     display_text = text or "Attached file(s) ka data analyze karo."
 
-    # Build conversation history — from DB (logged-in) or RAM (guest)
     if user:
         with db_conn() as db:
             history_rows = db.execute(
@@ -401,7 +412,6 @@ async def chat(
     current_parts = list(file_parts) + [types.Part.from_text(text=display_text)]
     contents.append(types.Content(role="user", parts=current_parts))
 
-    # Save the user's message
     if user:
         with db_conn() as db:
             db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "user", display_text))
@@ -411,44 +421,77 @@ async def chat(
     else:
         history.append({"role": "user", "text": display_text})
 
+    tools = get_tools(mode)
+
+    def save_ai_message(final_text):
+        if user:
+            with db_conn() as db:
+                db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "ai", final_text))
+                db.commit()
+        else:
+            history.append({"role": "ai", "text": final_text})
+
     def event_stream():
         full_text = ""
         try:
             if previews:
                 yield f"data: {json.dumps({'previews': previews})}\n\n"
+
+            config_kwargs = dict(
+                system_instruction=SYSTEM_PROMPT,
+                max_output_tokens=1500 if mode == "code" else 800,
+                temperature=0.7,
+            )
+            if tools:
+                config_kwargs["tools"] = tools
+
             stream = client.models.generate_content_stream(
                 model=MODEL,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    max_output_tokens=800,
-                    temperature=0.7,
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
+
             for chunk in stream:
-                if chunk.text:
-                    full_text += chunk.text
-                    yield f"data: {json.dumps({'chunk': chunk.text})}\n\n"
+                piece = ""
+                try:
+                    if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                        for part in chunk.candidates[0].content.parts:
+                            if getattr(part, "text", None):
+                                piece += part.text
+                            elif getattr(part, "executable_code", None):
+                                piece += f"\n```python\n{part.executable_code.code}\n```\n"
+                            elif getattr(part, "code_execution_result", None):
+                                piece += f"\n**Output:**\n```\n{part.code_execution_result.output}\n```\n"
+                    elif getattr(chunk, "text", None):
+                        piece = chunk.text
+                except Exception:
+                    if getattr(chunk, "text", None):
+                        piece = chunk.text
 
-            if user:
-                with db_conn() as db:
-                    db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "ai", full_text))
-                    db.commit()
-            else:
-                history.append({"role": "ai", "text": full_text})
+                if piece:
+                    full_text += piece
+                    yield f"data: {json.dumps({'chunk': piece})}\n\n"
 
+            # Web search sources (agar mode == 'search' tha)
+            try:
+                if mode == "search" and chunk.candidates and chunk.candidates[0].grounding_metadata:
+                    gm = chunk.candidates[0].grounding_metadata
+                    sources = []
+                    for gc in (gm.grounding_chunks or []):
+                        if getattr(gc, "web", None) and gc.web.uri:
+                            sources.append((gc.web.title or gc.web.uri, gc.web.uri))
+                    if sources:
+                        src_text = "\n\n**Sources:**\n" + "\n".join(f"- [{t}]({u})" for t, u in sources[:6])
+                        full_text += src_text
+                        yield f"data: {json.dumps({'chunk': src_text})}\n\n"
+            except Exception:
+                pass
+
+            save_ai_message(full_text)
             yield f"data: {json.dumps({'done': True})}\n\n"
         except GeneratorExit:
             if full_text:
-                if user:
-                    with db_conn() as db:
-                        db.execute(
-                            "INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)",
-                            (chat_id, "ai", full_text + "\n\n[User ne rok diya]"),
-                        )
-                        db.commit()
-                else:
-                    history.append({"role": "ai", "text": full_text + "\n\n[User ne rok diya]"})
+                save_ai_message(full_text + "\n\n[User ne rok diya]")
             raise
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
