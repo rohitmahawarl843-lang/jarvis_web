@@ -1,7 +1,8 @@
 """
 Jarvis AI — Web Version
 Login optional (guests get no persistence). Supports file analysis,
-optional Web Search tool, and optional Code Execution tool.
+optional Web Search tool, optional Code Execution tool, and
+MULTIPLE Gemini API keys with automatic fallback on quota errors.
 """
 import os
 import io
@@ -11,6 +12,8 @@ import secrets
 import hashlib
 import sqlite3
 import mimetypes
+import itertools
+import threading
 from contextlib import contextmanager
 from typing import List
 
@@ -26,7 +29,30 @@ DB_DIR = os.path.join(APP_DIR, "data")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "jarvis.db")
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+# ---------------- Multiple API keys support ----------------
+# Set GEMINI_API_KEYS="key1,key2,key3" (comma separated) on Railway.
+# GEMINI_API_KEY (single, old variable) still works as a fallback.
+_raw_keys = os.environ.get("GEMINI_API_KEYS", "").strip()
+if _raw_keys:
+    API_KEYS = [k.strip() for k in _raw_keys.split(",") if k.strip()]
+else:
+    single = os.environ.get("GEMINI_API_KEY", "").strip()
+    API_KEYS = [single] if single else []
+
+clients = [genai.Client(api_key=k) for k in API_KEYS]
+client = clients[0] if clients else None  # kept for /health check compatibility
+
+_rr_lock = threading.Lock()
+_rr_counter = itertools.count()
+
+
+def next_start_index():
+    if not clients:
+        return 0
+    with _rr_lock:
+        return next(_rr_counter) % len(clients)
+
+
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 DAILY_MESSAGE_LIMIT = int(os.environ.get("DAILY_MESSAGE_LIMIT", "0"))
 
@@ -38,8 +64,6 @@ summary/analysis do.
 Agar Web Search tool available hai, current/real-time info (news, weather,
 prices) ke liye zaroor use karo. Agar Code Execution tool available hai,
 code ko actually chala kar result verify karo, sirf likh kar mat do."""
-
-client = genai.Client(api_key=API_KEY) if API_KEY else None
 
 guest_sessions = {}
 
@@ -185,14 +209,35 @@ def build_file_part(filename: str, content_type: str, data: bytes):
 
 
 def get_tools(mode: str):
-    """mode: 'search' | 'code' | anything else = none.
-    Search grounding aur Code Execution ek saath enable nahi ho sakte,
-    isliye per-message ek hi tool use hota hai."""
     if mode == "search":
         return [types.Tool(google_search=types.GoogleSearch())]
     if mode == "code":
         return [types.Tool(code_execution=types.ToolCodeExecution())]
     return None
+
+
+def is_quota_error(err: Exception) -> bool:
+    s = str(err).lower()
+    return "429" in s or "resource_exhausted" in s or "quota" in s
+
+
+def extract_piece(chunk):
+    piece = ""
+    try:
+        if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+            for part in chunk.candidates[0].content.parts:
+                if getattr(part, "text", None):
+                    piece += part.text
+                elif getattr(part, "executable_code", None):
+                    piece += f"\n```python\n{part.executable_code.code}\n```\n"
+                elif getattr(part, "code_execution_result", None):
+                    piece += f"\n**Output:**\n```\n{part.code_execution_result.output}\n```\n"
+        elif getattr(chunk, "text", None):
+            piece = chunk.text
+    except Exception:
+        if getattr(chunk, "text", None):
+            piece = chunk.text
+    return piece
 
 
 # ---------------- App ----------------
@@ -208,7 +253,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "api_key_configured": bool(API_KEY)}
+    return {"status": "ok", "api_keys_configured": len(API_KEYS)}
 
 
 # ---------------- Auth routes ----------------
@@ -350,9 +395,9 @@ async def chat(
 ):
     user = get_current_user(request)
 
-    if not client:
+    if not clients:
         def err_stream():
-            yield f"data: {json.dumps({'error': 'Server par GEMINI_API_KEY set nahi hai.'})}\n\n"
+            yield f"data: {json.dumps({'error': 'Server par GEMINI_API_KEY(S) set nahi hai.'})}\n\n"
         return StreamingResponse(err_stream(), media_type="text/event-stream")
 
     text = (message or "").strip()
@@ -433,6 +478,11 @@ async def chat(
 
     def event_stream():
         full_text = ""
+        yielded_any = False
+        last_err = None
+        last_chunk = None
+        start_idx = next_start_index()
+
         try:
             if previews:
                 yield f"data: {json.dumps({'previews': previews})}\n\n"
@@ -445,37 +495,40 @@ async def chat(
             if tools:
                 config_kwargs["tools"] = tools
 
-            stream = client.models.generate_content_stream(
-                model=MODEL,
-                contents=contents,
-                config=types.GenerateContentConfig(**config_kwargs),
-            )
-
-            for chunk in stream:
-                piece = ""
+            for attempt in range(len(clients)):
+                current_client = clients[(start_idx + attempt) % len(clients)]
                 try:
-                    if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                        for part in chunk.candidates[0].content.parts:
-                            if getattr(part, "text", None):
-                                piece += part.text
-                            elif getattr(part, "executable_code", None):
-                                piece += f"\n```python\n{part.executable_code.code}\n```\n"
-                            elif getattr(part, "code_execution_result", None):
-                                piece += f"\n**Output:**\n```\n{part.code_execution_result.output}\n```\n"
-                    elif getattr(chunk, "text", None):
-                        piece = chunk.text
-                except Exception:
-                    if getattr(chunk, "text", None):
-                        piece = chunk.text
+                    stream = current_client.models.generate_content_stream(
+                        model=MODEL,
+                        contents=contents,
+                        config=types.GenerateContentConfig(**config_kwargs),
+                    )
+                    for chunk in stream:
+                        last_chunk = chunk
+                        piece = extract_piece(chunk)
+                        if piece:
+                            full_text += piece
+                            yielded_any = True
+                            yield f"data: {json.dumps({'chunk': piece})}\n\n"
+                    last_err = None
+                    break  # success
+                except Exception as e:
+                    last_err = e
+                    if is_quota_error(e) and not yielded_any:
+                        continue  # try next key
+                    else:
+                        break  # real error, or partial output already sent — don't retry
 
-                if piece:
-                    full_text += piece
-                    yield f"data: {json.dumps({'chunk': piece})}\n\n"
+            if last_err:
+                if is_quota_error(last_err):
+                    yield f"data: {json.dumps({'error': 'Sab configured API keys ki quota abhi khatam hai. Thodi der baad try karo.'})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'error': str(last_err)})}\n\n"
+                return
 
-            # Web search sources (agar mode == 'search' tha)
             try:
-                if mode == "search" and chunk.candidates and chunk.candidates[0].grounding_metadata:
-                    gm = chunk.candidates[0].grounding_metadata
+                if mode == "search" and last_chunk and last_chunk.candidates and last_chunk.candidates[0].grounding_metadata:
+                    gm = last_chunk.candidates[0].grounding_metadata
                     sources = []
                     for gc in (gm.grounding_chunks or []):
                         if getattr(gc, "web", None) and gc.web.uri:
@@ -493,8 +546,6 @@ async def chat(
             if full_text:
                 save_ai_message(full_text + "\n\n[User ne rok diya]")
             raise
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_stream(),
