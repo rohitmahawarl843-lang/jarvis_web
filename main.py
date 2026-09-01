@@ -1,5 +1,7 @@
 """
-Jarvis AI — Web Version (with login, DB-backed chat history, files, etc.)
+Jarvis AI — Web Version
+Login optional: logged-in users get saved chat history (DB).
+Guests can chat freely but nothing is saved — refresh = new chat.
 """
 import os
 import io
@@ -26,7 +28,7 @@ DB_PATH = os.path.join(DB_DIR, "jarvis.db")
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
-DAILY_MESSAGE_LIMIT = int(os.environ.get("DAILY_MESSAGE_LIMIT", "0"))  # 0 = no limit
+DAILY_MESSAGE_LIMIT = int(os.environ.get("DAILY_MESSAGE_LIMIT", "0"))
 
 SYSTEM_PROMPT = """You are Jarvis, a friendly AI assistant.
 You speak in Hinglish naturally. Be helpful and concise.
@@ -35,6 +37,10 @@ uska data dhyan se dekho/padho aur uske sawaal ka sahi jawab do ya data ka
 summary/analysis do."""
 
 client = genai.Client(api_key=API_KEY) if API_KEY else None
+
+# In-memory storage for GUEST (not logged in) conversations.
+# Resets on server restart — by design, guests don't get persistence.
+guest_sessions = {}
 
 # ---------------- Database ----------------
 
@@ -255,7 +261,7 @@ def me(request: Request):
     return {"username": user["username"]}
 
 
-# ---------------- Chat CRUD ----------------
+# ---------------- Chat CRUD (logged-in users only) ----------------
 
 @app.get("/api/chats")
 def list_chats(request: Request):
@@ -320,7 +326,7 @@ def delete_chat(chat_id: str, request: Request):
     return {"status": "deleted"}
 
 
-# ---------------- Main chat endpoint ----------------
+# ---------------- Main chat endpoint (works logged-in OR guest) ----------------
 
 @app.post("/api/chat")
 async def chat(
@@ -329,35 +335,12 @@ async def chat(
     chat_id: str = Form(...),
     files: List[UploadFile] = File(default=[]),
 ):
-    user = get_current_user(request)
-    if not user:
-        def unauth_stream():
-            yield f"data: {json.dumps({'error': 'Pehle login karo.'})}\n\n"
-        return StreamingResponse(unauth_stream(), media_type="text/event-stream")
+    user = get_current_user(request)  # None if guest — that's fine now
 
     if not client:
         def err_stream():
             yield f"data: {json.dumps({'error': 'Server par GEMINI_API_KEY set nahi hai.'})}\n\n"
         return StreamingResponse(err_stream(), media_type="text/event-stream")
-
-    with db_conn() as db:
-        chat_row = db.execute("SELECT * FROM chats WHERE id=? AND user_id=?", (chat_id, user["id"])).fetchone()
-    if not chat_row:
-        def nf_stream():
-            yield f"data: {json.dumps({'error': 'Chat nahi mila.'})}\n\n"
-        return StreamingResponse(nf_stream(), media_type="text/event-stream")
-
-    if DAILY_MESSAGE_LIMIT > 0:
-        with db_conn() as db:
-            count = db.execute(
-                """SELECT COUNT(*) c FROM messages m JOIN chats c2 ON m.chat_id = c2.id
-                   WHERE c2.user_id=? AND m.role='user' AND date(m.created_at) = date('now')""",
-                (user["id"],),
-            ).fetchone()["c"]
-        if count >= DAILY_MESSAGE_LIMIT:
-            def limit_stream():
-                yield f"data: {json.dumps({'error': f'Aaj ka {DAILY_MESSAGE_LIMIT} messages ka limit khatam ho gaya. Kal try karo.'})}\n\n"
-            return StreamingResponse(limit_stream(), media_type="text/event-stream")
 
     text = (message or "").strip()
     real_files = [f for f in files if f and f.filename]
@@ -366,6 +349,28 @@ async def chat(
         def empty_stream():
             yield f"data: {json.dumps({'done': True})}\n\n"
         return StreamingResponse(empty_stream(), media_type="text/event-stream")
+
+    # Logged-in-only: verify chat + rate limit
+    chat_row = None
+    if user:
+        with db_conn() as db:
+            chat_row = db.execute("SELECT * FROM chats WHERE id=? AND user_id=?", (chat_id, user["id"])).fetchone()
+        if not chat_row:
+            def nf_stream():
+                yield f"data: {json.dumps({'error': 'Chat nahi mila.'})}\n\n"
+            return StreamingResponse(nf_stream(), media_type="text/event-stream")
+
+        if DAILY_MESSAGE_LIMIT > 0:
+            with db_conn() as db:
+                count = db.execute(
+                    """SELECT COUNT(*) c FROM messages m JOIN chats c2 ON m.chat_id = c2.id
+                       WHERE c2.user_id=? AND m.role='user' AND date(m.created_at) = date('now')""",
+                    (user["id"],),
+                ).fetchone()["c"]
+            if count >= DAILY_MESSAGE_LIMIT:
+                def limit_stream():
+                    yield f"data: {json.dumps({'error': f'Aaj ka {DAILY_MESSAGE_LIMIT} messages ka limit khatam ho gaya. Kal try karo.'})}\n\n"
+                return StreamingResponse(limit_stream(), media_type="text/event-stream")
 
     file_parts = []
     previews = []
@@ -378,24 +383,33 @@ async def chat(
 
     display_text = text or "Attached file(s) ka data analyze karo."
 
-    with db_conn() as db:
-        history_rows = db.execute(
-            "SELECT role, text FROM messages WHERE chat_id=? ORDER BY id ASC", (chat_id,)
-        ).fetchall()
+    # Build conversation history — from DB (logged-in) or RAM (guest)
+    if user:
+        with db_conn() as db:
+            history_rows = db.execute(
+                "SELECT role, text FROM messages WHERE chat_id=? ORDER BY id ASC", (chat_id,)
+            ).fetchall()
+        history = [{"role": r["role"], "text": r["text"]} for r in history_rows]
+    else:
+        history = guest_sessions.setdefault(chat_id, [])
 
     contents = []
-    for row in history_rows:
-        role = "user" if row["role"] == "user" else "model"
-        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=row["text"])]))
+    for m in history:
+        role = "user" if m["role"] == "user" else "model"
+        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=m["text"])]))
 
     current_parts = list(file_parts) + [types.Part.from_text(text=display_text)]
     contents.append(types.Content(role="user", parts=current_parts))
 
-    with db_conn() as db:
-        db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "user", display_text))
-        if chat_row["title"] == "New chat":
-            db.execute("UPDATE chats SET title=? WHERE id=?", (display_text[:40], chat_id))
-        db.commit()
+    # Save the user's message
+    if user:
+        with db_conn() as db:
+            db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "user", display_text))
+            if chat_row["title"] == "New chat":
+                db.execute("UPDATE chats SET title=? WHERE id=?", (display_text[:40], chat_id))
+            db.commit()
+    else:
+        history.append({"role": "user", "text": display_text})
 
     def event_stream():
         full_text = ""
@@ -415,18 +429,26 @@ async def chat(
                 if chunk.text:
                     full_text += chunk.text
                     yield f"data: {json.dumps({'chunk': chunk.text})}\n\n"
-            with db_conn() as db:
-                db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "ai", full_text))
-                db.commit()
+
+            if user:
+                with db_conn() as db:
+                    db.execute("INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)", (chat_id, "ai", full_text))
+                    db.commit()
+            else:
+                history.append({"role": "ai", "text": full_text})
+
             yield f"data: {json.dumps({'done': True})}\n\n"
         except GeneratorExit:
             if full_text:
-                with db_conn() as db:
-                    db.execute(
-                        "INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)",
-                        (chat_id, "ai", full_text + "\n\n[User ne rok diya]"),
-                    )
-                    db.commit()
+                if user:
+                    with db_conn() as db:
+                        db.execute(
+                            "INSERT INTO messages (chat_id, role, text) VALUES (?, ?, ?)",
+                            (chat_id, "ai", full_text + "\n\n[User ne rok diya]"),
+                        )
+                        db.commit()
+                else:
+                    history.append({"role": "ai", "text": full_text + "\n\n[User ne rok diya]"})
             raise
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
